@@ -36,8 +36,13 @@ private:
   static double rAbsAccuracy_, rRelAccuracy_;
   static std::string what_;
   static std::string gridFileName_;
+  static std::string name_;
+  static std::string massName_;
+  static std::string toyName_;
+  static std::string out_;
   static bool qtilde_; 
   static bool picky_; 
+  static bool saveFitResult_;
   static bool noFitAsimov_; 
   static bool useGrid_; 
   static bool newExpected_; 
@@ -70,7 +75,11 @@ private:
 
   RooAbsData *asimovDataset(RooWorkspace *w, RooStats::ModelConfig *mc_s, RooStats::ModelConfig *mc_b, RooAbsData &data);
   double getCLs(RooRealVar &r, double rVal, bool getAlsoExpected=false, double *limit=0, double *limitErr=0);
-  
+
+  void fit_result_to_save(std::unique_ptr<RooFitResult> &&ptr, const std::string &name);
+  void save_fit_result() const;
+  std::vector<std::pair<std::unique_ptr<RooFitResult>, std::string>> fit_results_;
+
   TFile *gridFile_;
   TTree *limitsTree_;
   double readCL_;

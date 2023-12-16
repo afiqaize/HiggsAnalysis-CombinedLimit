@@ -19,6 +19,7 @@
 #include "HiggsAnalysis/CombinedLimit/interface/utils.h"
 #include "HiggsAnalysis/CombinedLimit/interface/AsimovUtils.h"
 #include "HiggsAnalysis/CombinedLimit/interface/Logger.h"
+#include "HiggsAnalysis/CombinedLimit/interface/ProfilingTools.h"
 
 #include <boost/bind.hpp>
 
@@ -26,11 +27,16 @@ using namespace RooStats;
 
 double AsymptoticLimits::rAbsAccuracy_ = 0.0005;
 double AsymptoticLimits::rRelAccuracy_ = 0.005;
-std::string AsymptoticLimits::what_ = "both"; 
+std::string AsymptoticLimits::what_ = "both";
+std::string AsymptoticLimits::name_ = "";
+std::string AsymptoticLimits::massName_ = "";
+std::string AsymptoticLimits::toyName_ = "";
+std::string AsymptoticLimits::out_ = ".";
 std::string AsymptoticLimits::rule_ = "CLs"; 
 std::string AsymptoticLimits::gridFileName_ = ""; 
 bool  AsymptoticLimits::qtilde_ = true; 
 bool  AsymptoticLimits::picky_ = false; 
+bool  AsymptoticLimits::saveFitResult_ = false;
 bool  AsymptoticLimits::noFitAsimov_ = false; 
 bool  AsymptoticLimits::useGrid_ = false; 
 bool  AsymptoticLimits::newExpected_ = true; 
@@ -57,6 +63,8 @@ LimitAlgo("AsymptoticLimits specific options") {
         ("qtilde", boost::program_options::value<bool>(&qtilde_)->default_value(qtilde_),  "Allow only non-negative signal strengths (default is true).")
         ("rule",    boost::program_options::value<std::string>(&rule_)->default_value(rule_),            "Rule to use: CLs, CLsplusb")
         ("picky", "Abort on fit failures")
+        ("saveFitResult",  "Save RooFitResult to asymptoticlimits.root")
+        ("out", boost::program_options::value<std::string>(&out_)->default_value(out_), "Directory to put the diagnostics output file in")
         ("noFitAsimov", "Use the pre-fit asimov dataset")
 	("getLimitFromGrid", boost::program_options::value<std::string>(&gridFileName_), "calculates the limit from a grid of r,cls values")
         ("newExpected", boost::program_options::value<bool>(&newExpected_)->default_value(newExpected_), "Use the new formula for expected limits (default is true)")
@@ -74,6 +82,10 @@ void AsymptoticLimits::applyOptions(const boost::program_options::variables_map 
             throw std::invalid_argument("AsymptoticLimits: option 'run' can only be 'observed', 'expected' or 'both' (the default) or 'blind' (a-priori expected)");
     }
     picky_ = vm.count("picky");
+    saveFitResult_ = (vm.count("saveFitResult") > 0);
+    name_ = vm["name"].as<std::string>();
+    massName_ = vm["massName"].as<std::string>();
+    toyName_ = vm["toyName"].as<std::string>();
     noFitAsimov_ = vm.count("noFitAsimov") || vm.count("bypassFrequentistFit"); // aslo pick up base option from combine
 
     if (rule_=="CLs") doCLs_ = true;
@@ -138,6 +150,9 @@ bool AsymptoticLimits::run(RooWorkspace *w, RooStats::ModelConfig *mc_s, RooStat
       asimovDataset_ = nullptr;
     }
 
+    if(saveFitResult_)
+      save_fit_result();
+
     // note that for expected we have to return FALSE even if we succeed because otherwise it goes into the observed limit as well
     return ret;
 }
@@ -187,6 +202,10 @@ bool AsymptoticLimits::runLimit(RooWorkspace *w, RooStats::ModelConfig *mc_s, Ro
     minim.minimize(verbose-2);
     fitFreeD_.readFrom(*params_);
     minNllD_ = nllD_->getVal();
+
+    std::unique_ptr<RooFitResult> res(dynamic_cast<RooFitResult *>(minim.save()->Clone()));
+    if(res.get() && saveFitResult_)
+      fit_result_to_save(std::move(res), "fit_observed");
   }
   rBestD_ = r->getVal();
   if (verbose > 0) {
@@ -207,6 +226,10 @@ bool AsymptoticLimits::runLimit(RooWorkspace *w, RooStats::ModelConfig *mc_s, Ro
     minim.minimize(verbose-2);
     fitFreeA_.readFrom(*params_);
     minNllA_ = nllA_->getVal();
+
+    std::unique_ptr<RooFitResult> res(dynamic_cast<RooFitResult *>(minim.save()->Clone()));
+    if(res.get() && saveFitResult_)
+      fit_result_to_save(std::move(res), "fit_expected_runlimit");
     sentry.clear();
   }
   if (verbose > 0) {
@@ -420,9 +443,9 @@ std::vector<std::pair<float,float> > AsymptoticLimits::runLimitExpected(RooWorks
     CloseCoutSentry sentry(verbose < 3);    
     minim.minimize(verbose-2);
     sentry.clear();
+    std::unique_ptr<RooFitResult> res(dynamic_cast<RooFitResult *>(minim.save()->Clone()));
     if (verbose > 1) {
         std::cout << "Fit to asimov dataset:" << std::endl;
-        std::auto_ptr<RooFitResult> res(minim.save());
         res->Print("V");
     }
     if (r->getVal()/r->getMax() > 1e-3) {
@@ -433,6 +456,8 @@ std::vector<std::pair<float,float> > AsymptoticLimits::runLimitExpected(RooWorks
 	}
     }
 
+    if(res.get() && saveFitResult_)
+      fit_result_to_save(std::move(res), "fit_expected_runlimitexpected");
 
     // 3) get ingredients for equation 37
     double nll0 = nll->getVal();
@@ -771,4 +796,21 @@ RooAbsData * AsymptoticLimits::asimovDataset(RooWorkspace *w, RooStats::ModelCon
     // w->import(*asimovData); // I'm assuming the Workspace takes ownership. Might be false.
     // delete asimovData;      //  ^^^^^^^^----- now assuming that the workspace clones.
     return asimovDataset_;
+}
+
+void AsymptoticLimits::fit_result_to_save(std::unique_ptr<RooFitResult> &&ptr, const std::string &name) {
+  fit_results_.emplace_back(std::move(ptr), name);
+}
+
+void AsymptoticLimits::save_fit_result() const {
+  const bool longName_ = runtimedef::get(std::string("longName"));
+  std::string alname(out_+"/asymptoticlimits"+name_);
+  if (longName_)
+    alname += "."+massName_+toyName_+"root";
+  else
+    alname += ".root";
+  std::unique_ptr<TFile> fitOut(TFile::Open(alname.c_str(), "RECREATE"));
+  fitOut->cd();
+  for (auto &&res : fit_results_)
+    fitOut->WriteTObject(res.first.get(), res.second.c_str());
 }
