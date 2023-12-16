@@ -293,7 +293,7 @@ bool MultiDimFit::runSpecific(RooWorkspace *w, RooStats::ModelConfig *mc_s, RooS
         case Cross: doBox(*nll, cl, "box", true); break;
         case Grid: doGrid(w,*nll); break;
         case RandomPoints: doRandomPoints(w,*nll); break;
-        case FixedPoint: doFixedPoint(w,*nll); break;
+        case FixedPoint: doFixedPoint(w,*nll); if (res.get() and saveFitResult_) {saveResult(*res);} break;
         case Contour2D: doContour2D(w,*nll); break;
         case Stitch2D: doStitch2D(w,*nll); break;
         case Impact: if (res.get()) doImpact(*res, *nll); break;
